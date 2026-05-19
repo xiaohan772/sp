@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>访问计数器 - 云端版</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: #0f0f1a;
+            font-family: 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+        }
+        .counter-card {
+            background: #1a1a2e;
+            border-radius: 20px;
+            padding: 48px 56px;
+            text-align: center;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.05);
+            transition: transform 0.3s ease;
+        }
+        .counter-card:hover {
+            transform: translateY(-4px);
+        }
+        .label {
+            color: #8b8ba7;
+            font-size: 14px;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+            margin-bottom: 20px;
+        }
+        .number {
+            font-size: 96px;
+            font-weight: 700;
+            line-height: 1;
+            letter-spacing: -2px;
+            background: linear-gradient(135deg, #6366f1, #8b5cf6, #a78bfa);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            filter: drop-shadow(0 0 24px rgba(99, 102, 241, 0.4));
+        }
+        .subtitle {
+            color: #5b5b7a;
+            font-size: 13px;
+            margin-top: 16px;
+            letter-spacing: 1px;
+        }
+        .status {
+            margin-top: 12px;
+            font-size: 11px;
+            color: #4b4b6a;
+        }
+        .reset-btn {
+            margin-top: 24px;
+            background: rgba(99, 102, 241, 0.2);
+            border: 1px solid rgba(99, 102, 241, 0.4);
+            color: #a78bfa;
+            padding: 6px 16px;
+            border-radius: 20px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .reset-btn:hover {
+            background: rgba(99, 102, 241, 0.4);
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <div class="counter-card">
+        <div class="label">🌐 累计访客</div>
+        <div class="number" id="count">--</div>
+        <div class="subtitle">不同设备/浏览器的独立访客数（全球统计）</div>
+        <div class="status" id="status">加载中...</div>
+        <div class="reset-btn" id="resetBtn" style="display:none;">重置我的ID（仅供测试）</div>
+    </div>
+
+    <script>
+        // ========== 你的 Supabase 配置（已填好） ==========
+        const SUPABASE_URL = 'https://xzezxjigihvzuisqkmsa.supabase.co';
+        const SUPABASE_KEY = 'sb_publishable_uobmd0i9abm5MCuvPG0zaQ_LEOZgXzS';
+        // =================================================
+
+        const countEl = document.getElementById('count');
+        const statusEl = document.getElementById('status');
+        const resetBtn = document.getElementById('resetBtn');
+
+        // 生成或获取用户唯一ID
+        function getUserId() {
+            let uid = localStorage.getItem('visitor_id');
+            if (!uid) {
+                uid = 'v_' + Date.now() + '_' + Math.random().toString(36).substring(2, 15);
+                localStorage.setItem('visitor_id', uid);
+            }
+            return uid;
+        }
+
+        const userId = getUserId();
+
+        // 记录本次访问（24小时内不重复）
+        async function recordVisit() {
+            const lastRecord = localStorage.getItem('last_visit_date');
+            const today = new Date().toISOString().split('T')[0];
+            
+            if (lastRecord === today) {
+                return false;
+            }
+            
+            try {
+                const res = await fetch(`${SUPABASE_URL}/rest/v1/access_log`, {
+                    method: 'POST',
+                    headers: {
+                        'apikey': SUPABASE_KEY,
+                        'Authorization': `Bearer ${SUPABASE_KEY}`,
+                        'Content-Type': 'application/json',
+                        'Prefer': 'return=minimal'
+                    },
+                    body: JSON.stringify({
+                        user_id: userId,
+                        action: 'visit',
+                        created_at: new Date().toISOString()
+                    })
+                });
+                
+                if (res.ok) {
+                    localStorage.setItem('last_visit_date', today);
+                    return true;
+                } else {
+                    console.log('HTTP错误:', res.status);
+                }
+            } catch (e) {
+                console.log('记录失败:', e);
+            }
+            return false;
+        }
+
+        // 获取独立访客总数
+        async function getTotalVisitors() {
+            try {
+                const res = await fetch(`${SUPABASE_URL}/rest/v1/access_log?select=user_id`, {
+                    headers: {
+                        'apikey': SUPABASE_KEY,
+                        'Authorization': `Bearer ${SUPABASE_KEY}`
+                    }
+                });
+                
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                
+                const data = await res.json();
+                const uniqueUsers = new Set();
+                for (let item of data) {
+                    if (item.user_id) uniqueUsers.add(item.user_id);
+                }
+                
+                return uniqueUsers.size;
+                
+            } catch (err) {
+                console.error('查询失败:', err);
+                throw err;
+            }
+        }
+
+        // 重置当前用户ID
+        function resetMyId() {
+            if (confirm('重置后，你将以新访客身份重新计数。确定吗？')) {
+                localStorage.removeItem('visitor_id');
+                localStorage.removeItem('last_visit_date');
+                location.reload();
+            }
+        }
+
+        // 主函数
+        async function init() {
+            try {
+                statusEl.textContent = '📡 连接云端...';
+                
+                await recordVisit();
+                
+                const total = await getTotalVisitors();
+                countEl.textContent = total.toLocaleString();
+                statusEl.textContent = `✨ 全球独立访客数：${total} 人`;
+                
+                resetBtn.style.display = 'inline-block';
+                resetBtn.onclick = resetMyId;
+                
+            } catch (err) {
+                console.error('错误:', err);
+                countEl.textContent = '⚠️';
+                statusEl.textContent = '连接失败，请检查网络或 Supabase 配置';
+                statusEl.style.color = '#ff6b6b';
+            }
+        }
+        
+        init();
+    </script>
+</body>
+</html>
